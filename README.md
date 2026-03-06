@@ -22,6 +22,9 @@ Please read the [medium article](https://navaneethsen.medium.com/i-built-a-tool-
 | Kokoro | [▶ podcast-kokoro.wav](https://soundcloud.com/n-sen-920478260/podcast-kokoro-1?in=n-sen-920478260/sets/markdownnarratorsamples&si=59422e0cecd446cea6a67fe99f3c8f7d&utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing) |
 | macOS say | [▶ podcast-macos.wav](https://soundcloud.com/n-sen-920478260/podcast-macos-2?in=n-sen-920478260/sets/markdownnarratorsamples&si=e79d978b20cb4c9da9b1a850c657a75f&utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing) |
 
+
+<video src='https://soundcloud.com/n-sen-920478260/podcast-qwen-3?in=n-sen-920478260/sets/markdownnarratorsamples'/>
+
 ## Supported TTS Engines
 
 | Engine | Flag | Quality | Speed | Requires |
