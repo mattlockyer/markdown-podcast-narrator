@@ -1,0 +1,14 @@
+# Core dependencies
+markdown-it-py>=3.0.0
+mdit-py-plugins>=0.4.0
+click>=8.1.0
+soundfile>=0.12.0
+
+# Qwen3-TTS (install these for neural TTS)
+qwen-tts
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Kokoro TTS (lightweight alternative, runs on CPU)
+kokoro
+misaki[en]
