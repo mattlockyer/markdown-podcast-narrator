@@ -1,20 +1,30 @@
 """
-TTS Narrator Module using Qwen3-TTS.
+TTS Narrator Module using multiple backends (macOS say, Qwen3-TTS, Kokoro).
 
 Synthesis strategies per backend:
 
   macOS 'say':
     Sends the ENTIRE document as a single call with [[slnc N]] embedded
-    commands for pauses. This preserves consistent prosody and emotion
+    pause commands. This preserves consistent prosody and emotion
     across the whole narration.
 
   Qwen3-TTS (neural TTS):
     Uses section-level chunks (grouped by heading) rather than
-    per-paragraph chunks. Each section is 100-500 chars of flowing
-    text — long enough for the model to establish consistent emotion,
-    short enough to avoid attention drift. Sections are stitched with
-    explicit PCM silence. An optional instruct parameter enforces a
-    consistent narrator tone across all sections.
+    per-paragraph chunks. Each section is ~100–500 characters of
+    flowing text — long enough for the model to establish consistent
+    emotion, but short enough to avoid attention drift. Sections are
+    stitched together with explicit PCM silence. An optional
+    `instruct` parameter enforces a consistent narrator tone across
+    sections.
+
+  Kokoro (fast neural TTS):
+    Designed for low-latency local inference. The document is processed
+    in medium-sized chunks (~200–400 characters) to keep generation fast
+    while maintaining natural phrasing. Audio segments are concatenated
+    with short pauses between sections to preserve readability and flow.
+    Kokoro is significantly faster than large neural models and works
+    well for quick narration, though the voice may be slightly less
+    expressive than Qwen3-TTS.
 """
 
 import logging
