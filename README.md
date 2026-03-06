@@ -18,14 +18,9 @@ Please read the [medium article](https://navaneethsen.medium.com/i-built-a-tool-
 
 | Engine | Sample |
 |---|---|
-| Qwen3-TTS | [▶ podcast-qwen.wav](<audio controls><source src="examples/podcast-qwen.wav" type="audio/mpeg"></audio>) |
+| Qwen3-TTS | [▶ podcast-qwen.wav](examples/podcast-qwen.wav) |
 | Kokoro | [▶ podcast-kokoro.wav](examples/podcast-kokoro.wav) |
 | macOS say | [▶ podcast-macos.wav](examples/podcast-macos.wav) |
-
-<audio controls><source src="examples/podcast-qwen.wav" type="audio/mpeg"></audio>
-
-
-
 
 ## Supported TTS Engines
 
