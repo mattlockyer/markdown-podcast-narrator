@@ -27,9 +27,9 @@ Please read the [medium article](https://navaneethsen.medium.com/i-built-a-tool-
 
 | Engine | Flag | Quality | Speed | Requires |
 |---|---|---|---|---|
-| **Qwen3-TTS** | `--engine qwen` (default) | Excellent | Slow (~1-2s/section on MPS) | `qwen-tts torch` + `brew install sox` |
-| **Kokoro** | `--engine kokoro` | Very good | Fast (CPU real-time) | `kokoro misaki[en]` |
-| **macOS say** | `--engine macos` or `--fallback` | Good | Very fast | None (built-in) |
+| **Qwen3-TTS** | `--engine qwen` (default) | Excellent | Very Slow (~30-60s/section on MPS) | `qwen-tts torch` + `brew install sox` |
+| **Kokoro** | `--engine kokoro` | Very good | Very Fast (~3-5s/section) | `kokoro misaki[en]` |
+| **macOS say** | `--engine macos` or `--fallback` | Good | Very fast (~3-5s/section) | None (built-in) |
 
 ## Supported Markdown Elements
 
