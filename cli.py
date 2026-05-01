@@ -35,6 +35,27 @@ INVOKE_DIR = Path(os.getcwd()).resolve()
 PARENT_DIR = "📁 .."
 
 
+def _load_env_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from a .env file into os.environ.
+
+    Existing env vars take precedence (so shell overrides win).
+    """
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
+_load_env_file(Path(__file__).resolve().parent / ".env")
+
+
 def _list_entries(directory: Path) -> list[str]:
     """List subdirectories and .md files in a directory, sorted."""
     entries = [PARENT_DIR]
@@ -53,9 +74,9 @@ def _list_entries(directory: Path) -> list[str]:
     return entries + dirs + files
 
 
-def pick_markdown_file() -> Path:
+def pick_markdown_file(start_dir: Path | None = None) -> Path:
     """Interactive directory browser. Arrow keys + Enter to navigate."""
-    current = Path.home()
+    current = (start_dir or Path.home()).expanduser().resolve()
 
     while True:
         entries = _list_entries(current)
@@ -80,23 +101,26 @@ def main():
     ap = argparse.ArgumentParser(description="Interactive markdown narrator")
     ap.add_argument("-o", "--output", default=None,
                     help="Output audio file path (default: <input>.mp3)")
-    ap.add_argument("--speaker", default="Ryan",
-                    help="Qwen3-TTS speaker name (default: Ryan)")
-    ap.add_argument("--rate", default=0.95, type=float,
-                    help="Speech rate multiplier 0.5-2.0 (default: 0.95)")
+    ap.add_argument("--speaker", default=os.environ.get("MDPOD_SPEAKER", "Ryan"),
+                    help="Qwen3-TTS speaker name (default: Ryan, env: MDPOD_SPEAKER)")
+    ap.add_argument("--rate", default=float(os.environ.get("MDPOD_RATE", "0.95")), type=float,
+                    help="Speech rate multiplier 0.5-2.0 (default: 0.95, env: MDPOD_RATE)")
     ap.add_argument("--fallback", action="store_true",
                     help="Use macOS 'say' instead of neural TTS")
-    ap.add_argument("--engine", default="kokoro", choices=["qwen", "kokoro", "macos"],
-                    help="TTS engine to use (default: kokoro)")
-    ap.add_argument("--model", default=None,
-                    help="Qwen3-TTS model ID")
-    ap.add_argument("--instruct", default=None,
-                    help="Narrator style instruction (e.g. 'Speak slowly and calmly')")
-    ap.add_argument("--kokoro-voice", default=None,
-                    help="Kokoro voice name (default: af_heart)")
+    ap.add_argument("--engine", default=os.environ.get("MDPOD_ENGINE", "kokoro"),
+                    choices=["qwen", "kokoro", "macos"],
+                    help="TTS engine to use (default: kokoro, env: MDPOD_ENGINE)")
+    ap.add_argument("--model", default=os.environ.get("MDPOD_MODEL"),
+                    help="Qwen3-TTS model ID (env: MDPOD_MODEL)")
+    ap.add_argument("--instruct", default=os.environ.get("MDPOD_INSTRUCT"),
+                    help="Narrator style instruction (env: MDPOD_INSTRUCT)")
+    ap.add_argument("--kokoro-voice", default=os.environ.get("MDPOD_KOKORO_VOICE"),
+                    help="Kokoro voice name (default: af_heart, env: MDPOD_KOKORO_VOICE)")
     args = ap.parse_args()
 
-    selected_path = pick_markdown_file()
+    home_env = os.environ.get("MDPOD_HOME_PATH")
+    start_dir = Path(home_env) if home_env else None
+    selected_path = pick_markdown_file(start_dir)
 
     if args.output:
         output_file = Path(args.output)
