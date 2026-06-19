@@ -7,7 +7,7 @@
 #     "mdit-py-plugins>=0.4.0",
 #     "click>=8.1.0",
 #     "soundfile>=0.12.0",
-#     "mlx-audio",
+#     "mlx-audio>=0.4.4",
 #     "misaki[en]",
 # ]
 # ///
@@ -108,7 +108,7 @@ def main():
     ap.add_argument("--fallback", action="store_true",
                     help="Use macOS 'say' instead of neural TTS")
     ap.add_argument("--engine", default=os.environ.get("MDPOD_ENGINE", "kokoro"),
-                    choices=["qwen", "kokoro", "macos"],
+                    choices=["qwen", "kokoro", "chatterbox", "macos"],
                     help="TTS engine to use (default: kokoro, env: MDPOD_ENGINE)")
     ap.add_argument("--model", default=os.environ.get("MDPOD_MODEL"),
                     help="Qwen3-TTS model ID (env: MDPOD_MODEL)")
@@ -120,6 +120,14 @@ def main():
                           "equal blend (af_heart,bf_emma), or weighted blend "
                           "(af_heart:0.7+bf_emma:0.3). "
                           "Default: narrator preset. Env: MDPOD_KOKORO_VOICE"))
+    ap.add_argument("--chatterbox-model", default=os.environ.get("MDPOD_CHATTERBOX_MODEL"),
+                    help="Chatterbox MLX repo (default: mlx-community/chatterbox-fp16, env: MDPOD_CHATTERBOX_MODEL)")
+    ap.add_argument("--ref-audio", default=os.environ.get("MDPOD_CHATTERBOX_REF_AUDIO"),
+                    help="Reference WAV for Chatterbox voice cloning (env: MDPOD_CHATTERBOX_REF_AUDIO)")
+    ap.add_argument("--exaggeration", default=None, type=float,
+                    help="Chatterbox expressiveness 0-1 (default: 0.5, env: MDPOD_CHATTERBOX_EXAGGERATION)")
+    ap.add_argument("--cfg-weight", default=None, type=float,
+                    help="Chatterbox CFG weight (default: 0.5, env: MDPOD_CHATTERBOX_CFG)")
     args = ap.parse_args()
 
     home_env = os.environ.get("MDPOD_HOME_PATH")
@@ -148,7 +156,11 @@ def main():
     # Init TTS
     engine = "macos" if args.fallback else args.engine
     print(f"Initializing TTS ({engine})...")
-    narrator = Narrator(engine=engine, model_id=args.model)
+    narrator = Narrator(engine=engine, model_id=args.model,
+                        chatterbox_repo=args.chatterbox_model,
+                        chatterbox_ref_audio=args.ref_audio,
+                        chatterbox_exaggeration=args.exaggeration,
+                        chatterbox_cfg_weight=args.cfg_weight)
 
     if not narrator.initialize():
         if engine != "macos":

@@ -9,6 +9,6 @@ qwen-tts
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# Kokoro TTS (MLX-accelerated on Apple Silicon)
-mlx-audio
+# Kokoro / Chatterbox TTS (MLX-accelerated on Apple Silicon)
+mlx-audio>=0.4.4
 misaki[en]

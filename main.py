@@ -40,7 +40,8 @@ from narrator import Narrator
 @click.option("--speaker", default="Ryan", help="Qwen3-TTS speaker name")
 @click.option("--rate", default=1.10, type=float, help="Speech rate multiplier 0.5-2.0 (default: 1.10)")
 @click.option("--fallback", is_flag=True, help="Use macOS 'say' instead of neural TTS")
-@click.option("--engine", default="qwen", type=click.Choice(["qwen", "kokoro", "macos"]),
+@click.option("--engine", default="qwen",
+              type=click.Choice(["qwen", "kokoro", "chatterbox", "macos"]),
               help="TTS engine to use (default: qwen)")
 @click.option("--model", default=None,
               help="Qwen3-TTS model ID (default: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)")
@@ -51,9 +52,18 @@ from narrator import Narrator
                     "(narrator|transatlantic|professional|british|us), equal blend "
                     "(af_heart,bf_emma), or weighted (af_heart:0.7+bf_emma:0.3). "
                     "Default: narrator preset"))
+@click.option("--chatterbox-model", default=None,
+              help="Chatterbox MLX repo (default: mlx-community/chatterbox-fp16)")
+@click.option("--ref-audio", default=None, type=click.Path(exists=True),
+              help="Reference WAV for Chatterbox voice cloning (default: bundled voice)")
+@click.option("--exaggeration", default=None, type=float,
+              help="Chatterbox emotion/expressiveness 0-1 (default: 0.5)")
+@click.option("--cfg-weight", default=None, type=float,
+              help="Chatterbox classifier-free guidance weight (default: 0.5)")
 def cli(input_file: str, output_file: str, speaker: str, rate: float,
         fallback: bool, engine: str, model: str, instruct: str,
-        kokoro_voice: str):
+        kokoro_voice: str, chatterbox_model: str, ref_audio: str,
+        exaggeration: float, cfg_weight: float):
     """Convert a Markdown file to podcast-style audio narration.
 
     INPUT_FILE: Path to the Markdown (.md) file to convert.
@@ -82,7 +92,11 @@ def cli(input_file: str, output_file: str, speaker: str, rate: float,
             engine = "macos"
 
         click.echo(f"Initializing TTS ({engine})...")
-        narrator = Narrator(engine=engine, model_id=model)
+        narrator = Narrator(engine=engine, model_id=model,
+                            chatterbox_repo=chatterbox_model,
+                            chatterbox_ref_audio=ref_audio,
+                            chatterbox_exaggeration=exaggeration,
+                            chatterbox_cfg_weight=cfg_weight)
 
         if not narrator.initialize():
             if engine != "macos":

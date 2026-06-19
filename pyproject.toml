@@ -20,8 +20,21 @@ qwen = [
     "torchaudio>=2.0.0",
 ]
 kokoro = [
-    "mlx-audio",
+    "mlx-audio>=0.4.4",
     "misaki[en]",
+]
+chatterbox = [
+    "mlx-audio>=0.4.4",
+]
+
+# qwen-tts pins transformers==4.57.3, but mlx-audio (kokoro/chatterbox)
+# needs transformers>=5.5.0 — so the qwen engine can't share a resolution
+# universe with the MLX engines. Declare them mutually exclusive; pick the
+# engine's extra at install time (mdpod.sh uses --extra kokoro).
+[tool.uv]
+conflicts = [
+    [{ extra = "qwen" }, { extra = "kokoro" }],
+    [{ extra = "qwen" }, { extra = "chatterbox" }],
 ]
 
 [tool.setuptools]

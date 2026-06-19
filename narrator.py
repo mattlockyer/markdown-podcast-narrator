@@ -28,6 +28,7 @@ Synthesis strategies per backend:
 """
 
 import logging
+import os
 import struct
 import subprocess
 import tempfile
@@ -43,21 +44,53 @@ SpeechChunk = Tuple[str, int]
 DEFAULT_INSTRUCT = "Calm, professional podcast narrator. Speak at a brisk, confident pace of about 160 words per minute."
 
 # Named Kokoro voice blends. Values are voice specs (see _resolve_voice).
+# Any of Kokoro v1.0's 54 raw voice names (af_*, am_*, bf_*, bm_*, …) can also
+# be passed directly or blended — these presets are just curated shortcuts.
 KOKORO_VOICE_PRESETS = {
-    "transatlantic": "af_heart:0.55+bf_emma:0.45",  # default — mild US lean
-    "professional":  "af_heart:0.6+af_bella:0.4",
-    "british":       "bf_emma",
+    # --- blends ---
+    "transatlantic":   "af_heart:0.55+bf_emma:0.45",   # default — mild US lean
+    "narrator":        "af_heart:0.55+bf_emma:0.45",   # alias for transatlantic
+    "professional":    "af_heart:0.6+af_bella:0.4",    # warm US female
+    "professional-uk": "bf_emma:0.6+bf_isabella:0.4",  # warm UK female
+    "anchor":          "am_michael:0.6+am_fenrir:0.4", # US male, newsreader
+    "documentary":     "bm_george:0.6+bm_fable:0.4",   # UK male, documentary
+    "duet":            "af_heart:0.5+am_michael:0.5",  # androgynous US blend
+
+    # --- single voices: US female / male ---
     "us":            "af_heart",
+    "us-female":     "af_heart",
+    "us-bella":      "af_bella",
+    "us-nicole":     "af_nicole",
+    "us-sarah":      "af_sarah",
+    "us-male":       "am_michael",
+    "us-fenrir":     "am_fenrir",
+    "us-puck":       "am_puck",
+
+    # --- single voices: British female / male ---
+    "british":       "bf_emma",
+    "uk-female":     "bf_emma",
+    "uk-isabella":   "bf_isabella",
+    "uk-male":       "bm_george",
+    "uk-fable":      "bm_fable",
+    "uk-lewis":      "bm_lewis",
 }
+
+# Chatterbox (Resemble AI) defaults — MLX-converted weights from mlx-community.
+# fp16 is reference quality; -8bit / -4bit variants trade quality for size/speed.
+CHATTERBOX_DEFAULT_REPO = "mlx-community/chatterbox-fp16"
 
 
 class Narrator:
     """Text-to-speech narrator with backend-appropriate synthesis strategy."""
 
-    ENGINES = ("qwen", "kokoro", "macos")
+    ENGINES = ("qwen", "kokoro", "chatterbox", "macos")
 
     def __init__(self, engine: str = "qwen", model_id: Optional[str] = None,
-                 use_qwen: bool = True):
+                 use_qwen: bool = True,
+                 chatterbox_repo: Optional[str] = None,
+                 chatterbox_ref_audio: Optional[str] = None,
+                 chatterbox_exaggeration: Optional[float] = None,
+                 chatterbox_cfg_weight: Optional[float] = None):
         # engine param takes priority; use_qwen kept for backward compat
         if engine != "qwen":
             self.engine = engine
@@ -72,6 +105,27 @@ class Narrator:
         self.kokoro_voice = "transatlantic"
         self._resolved_voice: Optional[str] = None
         self.kokoro_speed = 1.0
+
+        # Chatterbox (Resemble AI). Config falls back to env then sane defaults
+        # so it works out of the box; the entry points can override via kwargs.
+        self.chatterbox_model = None
+        self.chatterbox_repo = (
+            chatterbox_repo or os.environ.get("MDPOD_CHATTERBOX_MODEL")
+            or CHATTERBOX_DEFAULT_REPO
+        )
+        self.chatterbox_ref_audio = (
+            chatterbox_ref_audio or os.environ.get("MDPOD_CHATTERBOX_REF_AUDIO")
+        )
+        self.chatterbox_exaggeration = float(
+            chatterbox_exaggeration if chatterbox_exaggeration is not None
+            else os.environ.get("MDPOD_CHATTERBOX_EXAGGERATION", 0.5)
+        )
+        self.chatterbox_cfg_weight = float(
+            chatterbox_cfg_weight if chatterbox_cfg_weight is not None
+            else os.environ.get("MDPOD_CHATTERBOX_CFG", 0.5)
+        )
+        self._chatterbox_ref = None  # (mx.array, sr) loaded at init if ref given
+
         self.speaker = "Ryan"
         self.language = "English"
         self.say_rate = 180
@@ -88,12 +142,15 @@ class Narrator:
             return self.model is not None
         if self.engine == "kokoro":
             return self.kokoro_pipeline is not None
+        if self.engine == "chatterbox":
+            return self.chatterbox_model is not None
         return False
 
     def initialize(self) -> bool:
         init_fns = {
             "qwen": self._init_qwen,
             "kokoro": self._init_kokoro,
+            "chatterbox": self._init_chatterbox,
             "macos": self._init_macos_say,
         }
         fn = init_fns.get(self.engine)
@@ -243,6 +300,8 @@ class Narrator:
             return self._synth_qwen(text)
         if self.engine == "kokoro":
             return self._synth_kokoro(text)
+        if self.engine == "chatterbox":
+            return self._synth_chatterbox(text)
         return None, None
 
     def _synth_chunked(
@@ -496,6 +555,83 @@ class Narrator:
 
         except Exception as e:
             logger.error(f"Kokoro synth error: {e}")
+            return None, None
+
+    # ------------------------------------------------------------------
+    # Chatterbox (Resemble AI) — expressive neural TTS with optional cloning
+    # ------------------------------------------------------------------
+
+    def _init_chatterbox(self) -> bool:
+        try:
+            from mlx_audio.tts.utils import load_model as _mlx_load
+
+            logger.info(f"Loading Chatterbox/MLX ({self.chatterbox_repo})...")
+            self.chatterbox_model = _mlx_load(self.chatterbox_repo)
+
+            # Optional reference clip for voice cloning. Without one, Chatterbox
+            # uses its bundled default voice (conds.safetensors in the repo).
+            if self.chatterbox_ref_audio:
+                self._load_chatterbox_ref(self.chatterbox_ref_audio)
+
+            logger.info("Chatterbox/MLX loaded successfully")
+            return True
+
+        except ImportError as e:
+            logger.error(f"Missing dependency: {e}")
+            logger.error("Install with: pip install 'mlx-audio>=0.4.4'")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to load Chatterbox/MLX: {e}")
+            return False
+
+    def _load_chatterbox_ref(self, path: str) -> None:
+        """Load a reference clip for voice cloning into an mx.array (mono)."""
+        try:
+            import mlx.core as mx
+            import numpy as np
+            import soundfile as sf
+
+            data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+            if getattr(data, "ndim", 1) > 1:
+                data = data.mean(axis=1)  # mix down to mono
+            self._chatterbox_ref = (mx.array(np.asarray(data, dtype=np.float32)), int(sr))
+            logger.info(f"Loaded Chatterbox reference voice: {path} ({sr} Hz)")
+        except Exception as e:
+            logger.error(f"Could not load reference audio {path}: {e} — using default voice")
+            self._chatterbox_ref = None
+
+    def _synth_chatterbox(self, text: str) -> Tuple[Optional[bytes], Optional[int]]:
+        try:
+            import numpy as np
+
+            kwargs = dict(
+                exaggeration=self.chatterbox_exaggeration,
+                cfg_weight=self.chatterbox_cfg_weight,
+                verbose=False,
+            )
+            if self._chatterbox_ref is not None:
+                ref_audio, ref_sr = self._chatterbox_ref
+                kwargs["audio_prompt"] = ref_audio
+                kwargs["audio_prompt_sr"] = ref_sr
+
+            sample_rate = 24000
+            audio_parts = []
+            for result in self.chatterbox_model.generate(text, **kwargs):
+                if result.audio is not None:
+                    audio_parts.append(np.asarray(result.audio).squeeze())
+                    sample_rate = result.sample_rate
+
+            if not audio_parts:
+                logger.error("Chatterbox produced no audio")
+                return None, None
+
+            audio = np.concatenate(audio_parts)
+            audio = np.clip(audio, -1.0, 1.0)
+            pcm = (audio * 32767).astype(np.int16).tobytes()
+            return pcm, sample_rate
+
+        except Exception as e:
+            logger.error(f"Chatterbox synth error: {e}")
             return None, None
 
     def _init_macos_say(self) -> bool:
