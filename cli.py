@@ -7,7 +7,7 @@
 #     "mdit-py-plugins>=0.4.0",
 #     "click>=8.1.0",
 #     "soundfile>=0.12.0",
-#     "kokoro",
+#     "mlx-audio",
 #     "misaki[en]",
 # ]
 # ///
@@ -103,8 +103,8 @@ def main():
                     help="Output audio file path (default: <input>.mp3)")
     ap.add_argument("--speaker", default=os.environ.get("MDPOD_SPEAKER", "Ryan"),
                     help="Qwen3-TTS speaker name (default: Ryan, env: MDPOD_SPEAKER)")
-    ap.add_argument("--rate", default=float(os.environ.get("MDPOD_RATE", "0.95")), type=float,
-                    help="Speech rate multiplier 0.5-2.0 (default: 0.95, env: MDPOD_RATE)")
+    ap.add_argument("--rate", default=float(os.environ.get("MDPOD_RATE", "1.10")), type=float,
+                    help="Speech rate multiplier 0.5-2.0 (default: 1.10, env: MDPOD_RATE)")
     ap.add_argument("--fallback", action="store_true",
                     help="Use macOS 'say' instead of neural TTS")
     ap.add_argument("--engine", default=os.environ.get("MDPOD_ENGINE", "kokoro"),
@@ -115,7 +115,11 @@ def main():
     ap.add_argument("--instruct", default=os.environ.get("MDPOD_INSTRUCT"),
                     help="Narrator style instruction (env: MDPOD_INSTRUCT)")
     ap.add_argument("--kokoro-voice", default=os.environ.get("MDPOD_KOKORO_VOICE"),
-                    help="Kokoro voice name (default: af_heart, env: MDPOD_KOKORO_VOICE)")
+                    help=("Kokoro voice spec. Single name (af_heart), preset "
+                          "(narrator|transatlantic|professional|british|us), "
+                          "equal blend (af_heart,bf_emma), or weighted blend "
+                          "(af_heart:0.7+bf_emma:0.3). "
+                          "Default: narrator preset. Env: MDPOD_KOKORO_VOICE"))
     args = ap.parse_args()
 
     home_env = os.environ.get("MDPOD_HOME_PATH")

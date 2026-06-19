@@ -1,5 +1,5 @@
 """
-TTS Narrator Module using multiple backends (macOS say, Qwen3-TTS, Kokoro).
+TTS Narrator Module using multiple backends (macOS say, Qwen3-TTS, Kokoro/MLX).
 
 Synthesis strategies per backend:
 
@@ -17,14 +17,14 @@ Synthesis strategies per backend:
     `instruct` parameter enforces a consistent narrator tone across
     sections.
 
-  Kokoro (fast neural TTS):
-    Designed for low-latency local inference. The document is processed
-    in medium-sized chunks (~200–400 characters) to keep generation fast
+  Kokoro (fast neural TTS, MLX-accelerated on Apple Silicon):
+    Runs the Kokoro-82M model via mlx-audio for low-latency local
+    inference on Apple Silicon. The document is processed in
+    medium-sized chunks (~200–400 characters) to keep generation fast
     while maintaining natural phrasing. Audio segments are concatenated
     with short pauses between sections to preserve readability and flow.
-    Kokoro is significantly faster than large neural models and works
-    well for quick narration, though the voice may be slightly less
-    expressive than Qwen3-TTS.
+    Significantly faster than large neural models, though the voice may
+    be slightly less expressive than Qwen3-TTS.
 """
 
 import logging
@@ -41,6 +41,14 @@ SpeechChunk = Tuple[str, int]
 
 # Default narrator instruction for consistent professional tone
 DEFAULT_INSTRUCT = "Calm, professional podcast narrator. Speak at a brisk, confident pace of about 160 words per minute."
+
+# Named Kokoro voice blends. Values are voice specs (see _resolve_voice).
+KOKORO_VOICE_PRESETS = {
+    "transatlantic": "af_heart:0.55+bf_emma:0.45",  # default — mild US lean
+    "professional":  "af_heart:0.6+af_bella:0.4",
+    "british":       "bf_emma",
+    "us":            "af_heart",
+}
 
 
 class Narrator:
@@ -61,7 +69,8 @@ class Narrator:
         self.model_id = model_id or "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
         self.model = None        # Qwen3-TTS model
         self.kokoro_pipeline = None  # Kokoro pipeline
-        self.kokoro_voice = "af_heart"
+        self.kokoro_voice = "transatlantic"
+        self._resolved_voice: Optional[str] = None
         self.kokoro_speed = 1.0
         self.speaker = "Ryan"
         self.language = "English"
@@ -103,6 +112,8 @@ class Narrator:
         self.say_rate = max(90, min(720, int(180 * rate)))
         if kokoro_voice is not None:
             self.kokoro_voice = kokoro_voice
+            if self.kokoro_pipeline is not None:
+                self._resolved_voice = self._resolve_kokoro_voice(self.kokoro_voice)
         if self.engine == "kokoro":
             self.kokoro_speed = rate / self._DEFAULT_RATE  # normalize: 0.95 → 1.0
 
@@ -385,25 +396,77 @@ class Narrator:
 
     def _init_kokoro(self) -> bool:
         try:
-            from kokoro import KPipeline
+            from mlx_audio.tts.utils import load_model as _mlx_load
+            from mlx_audio.tts.models.kokoro import KokoroPipeline, Model
             import logging as _logging
             _logging.getLogger("misaki").setLevel(_logging.ERROR)
 
             lang = self.language.lower()
             lang_code = "a" if lang in ("english", "en", "a") else "a"
-            logger.info(f"Loading Kokoro (lang={lang_code}, voice={self.kokoro_voice})...")
+            repo_id = Model.REPO_ID
+            logger.info(f"Loading Kokoro/MLX (lang={lang_code}, voice={self.kokoro_voice})...")
 
-            self.kokoro_pipeline = KPipeline(lang_code=lang_code)
-            logger.info("Kokoro loaded successfully")
+            model = _mlx_load(repo_id)
+            self.kokoro_pipeline = KokoroPipeline(
+                lang_code=lang_code, model=model, repo_id=repo_id,
+            )
+            self._resolved_voice = self._resolve_kokoro_voice(self.kokoro_voice)
+            logger.info("Kokoro/MLX loaded successfully")
             return True
 
         except ImportError as e:
             logger.error(f"Missing dependency: {e}")
-            logger.error("Install with: pip install kokoro soundfile")
+            logger.error("Install with: pip install mlx-audio 'misaki[en]'")
             return False
         except Exception as e:
-            logger.error(f"Failed to load Kokoro: {e}")
+            logger.error(f"Failed to load Kokoro/MLX: {e}")
             return False
+
+    def _resolve_kokoro_voice(self, spec: str) -> str:
+        """Turn a voice spec into a name the pipeline can accept.
+
+        Spec syntax:
+          "af_heart"                       single voice
+          "narrator"                       named preset (KOKORO_VOICE_PRESETS)
+          "af_heart,bf_emma"               equal-weight blend (mlx-audio native)
+          "af_heart:0.7+bf_emma:0.3"       weighted blend (computed here)
+          "af_heart+bf_emma"               weighted blend, weights default to 1.0
+
+        For weighted blends, we precompute the average and stash it in the
+        pipeline's voice cache under a synthetic key, then return that key.
+        """
+        if spec in KOKORO_VOICE_PRESETS:
+            spec = KOKORO_VOICE_PRESETS[spec]
+
+        # Pass-through: single name or comma-equal blend (mlx-audio handles both)
+        if "+" not in spec and ":" not in spec:
+            return spec
+
+        import mlx.core as mx
+
+        pairs: List[Tuple[str, float]] = []
+        for token in spec.split("+"):
+            token = token.strip()
+            if ":" in token:
+                name, weight = token.split(":", 1)
+                pairs.append((name.strip(), float(weight)))
+            else:
+                pairs.append((token, 1.0))
+
+        total = sum(w for _, w in pairs)
+        if total <= 0:
+            raise ValueError(f"Voice blend weights must sum to >0: {spec!r}")
+
+        blended = None
+        for name, weight in pairs:
+            tensor = self.kokoro_pipeline.load_single_voice(name)
+            scaled = tensor * (weight / total)
+            blended = scaled if blended is None else blended + scaled
+
+        key = f"blend::{spec}"
+        self.kokoro_pipeline.voices[key] = blended
+        logger.info(f"Built voice blend {spec} → {key}")
+        return key
 
     def _synth_kokoro(self, text: str) -> Tuple[Optional[bytes], Optional[int]]:
         try:
@@ -414,12 +477,13 @@ class Narrator:
 
             generator = self.kokoro_pipeline(
                 text,
-                voice=self.kokoro_voice,
+                voice=self._resolved_voice or self.kokoro_voice,
                 speed=self.kokoro_speed,
             )
             for _gs, _ps, audio in generator:
                 if audio is not None:
-                    audio_parts.append(audio)
+                    # mlx-audio yields shape (1, N) mx.array; squeeze to 1D numpy
+                    audio_parts.append(np.asarray(audio).squeeze())
 
             if not audio_parts:
                 logger.error("Kokoro produced no audio")

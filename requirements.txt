@@ -9,6 +9,6 @@ qwen-tts
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# Kokoro TTS (lightweight alternative, runs on CPU)
-kokoro
+# Kokoro TTS (MLX-accelerated on Apple Silicon)
+mlx-audio
 misaki[en]

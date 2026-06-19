@@ -20,7 +20,7 @@ qwen = [
     "torchaudio>=2.0.0",
 ]
 kokoro = [
-    "kokoro",
+    "mlx-audio",
     "misaki[en]",
 ]
 

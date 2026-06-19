@@ -38,7 +38,7 @@ from narrator import Narrator
 @click.option("-o", "--output", "output_file", default=None,
               help="Output audio file path (default: output.mp3)")
 @click.option("--speaker", default="Ryan", help="Qwen3-TTS speaker name")
-@click.option("--rate", default=0.95, type=float, help="Speech rate multiplier (0.5-2.0)")
+@click.option("--rate", default=1.10, type=float, help="Speech rate multiplier 0.5-2.0 (default: 1.10)")
 @click.option("--fallback", is_flag=True, help="Use macOS 'say' instead of neural TTS")
 @click.option("--engine", default="qwen", type=click.Choice(["qwen", "kokoro", "macos"]),
               help="TTS engine to use (default: qwen)")
@@ -47,7 +47,10 @@ from narrator import Narrator
 @click.option("--instruct", default=None,
               help="Narrator style instruction for Qwen3-TTS (e.g. 'Speak slowly and calmly')")
 @click.option("--kokoro-voice", default=None,
-              help="Kokoro voice name (default: af_heart)")
+              help=("Kokoro voice spec: single name (af_heart), preset "
+                    "(narrator|transatlantic|professional|british|us), equal blend "
+                    "(af_heart,bf_emma), or weighted (af_heart:0.7+bf_emma:0.3). "
+                    "Default: narrator preset"))
 def cli(input_file: str, output_file: str, speaker: str, rate: float,
         fallback: bool, engine: str, model: str, instruct: str,
         kokoro_voice: str):
