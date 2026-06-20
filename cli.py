@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from InquirerPy import inquirer
 
 from parser import MarkdownParser
-from narrator import Narrator
+from narrator import Narrator, resolve_profile
 
 # Remember where the user ran the command from
 INVOKE_DIR = Path(os.getcwd()).resolve()
@@ -101,33 +101,37 @@ def main():
     ap = argparse.ArgumentParser(description="Interactive markdown narrator")
     ap.add_argument("-o", "--output", default=None,
                     help="Output audio file path (default: <input>.mp3)")
-    ap.add_argument("--speaker", default=os.environ.get("MDPOD_SPEAKER", "Ryan"),
-                    help="Qwen3-TTS speaker name (default: Ryan, env: MDPOD_SPEAKER)")
-    ap.add_argument("--rate", default=float(os.environ.get("MDPOD_RATE", "1.10")), type=float,
-                    help="Speech rate multiplier 0.5-2.0 (default: 1.10, env: MDPOD_RATE)")
+    ap.add_argument("--profile", default=None,
+                    help="Voice profile: kokoro-transatlantic | chatterbox-transatlantic "
+                         "(default: env MDPOD_PROFILE, else chatterbox-transatlantic)")
+    ap.add_argument("--speaker", default=None,
+                    help="Qwen3-TTS speaker name")
+    ap.add_argument("--rate", default=None, type=float,
+                    help="Speech rate multiplier 0.5-2.0")
     ap.add_argument("--fallback", action="store_true",
                     help="Use macOS 'say' instead of neural TTS")
-    ap.add_argument("--engine", default=os.environ.get("MDPOD_ENGINE", "kokoro"),
+    ap.add_argument("--engine", default=None,
                     choices=["qwen", "kokoro", "chatterbox", "macos"],
-                    help="TTS engine to use (default: kokoro, env: MDPOD_ENGINE)")
-    ap.add_argument("--model", default=os.environ.get("MDPOD_MODEL"),
-                    help="Qwen3-TTS model ID (env: MDPOD_MODEL)")
-    ap.add_argument("--instruct", default=os.environ.get("MDPOD_INSTRUCT"),
-                    help="Narrator style instruction (env: MDPOD_INSTRUCT)")
-    ap.add_argument("--kokoro-voice", default=os.environ.get("MDPOD_KOKORO_VOICE"),
+                    help="TTS engine (overrides the profile's engine)")
+    ap.add_argument("--model", default=None,
+                    help="Qwen3-TTS model ID")
+    ap.add_argument("--instruct", default=None,
+                    help="Narrator style instruction")
+    ap.add_argument("--kokoro-voice", default=None,
                     help=("Kokoro voice spec. Single name (af_heart), preset "
                           "(narrator|transatlantic|professional|british|us), "
                           "equal blend (af_heart,bf_emma), or weighted blend "
-                          "(af_heart:0.7+bf_emma:0.3). "
-                          "Default: narrator preset. Env: MDPOD_KOKORO_VOICE"))
-    ap.add_argument("--chatterbox-model", default=os.environ.get("MDPOD_CHATTERBOX_MODEL"),
-                    help="Chatterbox MLX repo (default: mlx-community/chatterbox-fp16, env: MDPOD_CHATTERBOX_MODEL)")
-    ap.add_argument("--ref-audio", default=os.environ.get("MDPOD_CHATTERBOX_REF_AUDIO"),
-                    help="Reference WAV for Chatterbox voice cloning (env: MDPOD_CHATTERBOX_REF_AUDIO)")
+                          "(af_heart:0.7+bf_emma:0.3)."))
+    ap.add_argument("--chatterbox-model", default=None,
+                    help="Chatterbox MLX repo (default: mlx-community/chatterbox-fp16)")
+    ap.add_argument("--ref-audio", default=None,
+                    help="Reference WAV for Chatterbox voice cloning")
     ap.add_argument("--exaggeration", default=None, type=float,
-                    help="Chatterbox expressiveness 0-1 (default: 0.5, env: MDPOD_CHATTERBOX_EXAGGERATION)")
+                    help="Chatterbox expressiveness 0-1")
     ap.add_argument("--cfg-weight", default=None, type=float,
-                    help="Chatterbox CFG weight (default: 0.5, env: MDPOD_CHATTERBOX_CFG)")
+                    help="Chatterbox CFG weight")
+    ap.add_argument("--pause-scale", default=None, type=float,
+                    help="Scale silence between sections (default per profile)")
     args = ap.parse_args()
 
     home_env = os.environ.get("MDPOD_HOME_PATH")
@@ -153,14 +157,24 @@ def main():
         print("Error: no content found in markdown file", file=sys.stderr)
         sys.exit(1)
 
+    # Resolve voice profile (explicit flags override profile values)
+    cfg = resolve_profile(
+        args.profile, engine=args.engine, rate=args.rate, kokoro_voice=args.kokoro_voice,
+        chatterbox_repo=args.chatterbox_model, chatterbox_ref_audio=args.ref_audio,
+        chatterbox_exaggeration=args.exaggeration, chatterbox_cfg_weight=args.cfg_weight,
+        pause_scale=args.pause_scale, instruct=args.instruct, speaker=args.speaker,
+        model=args.model,
+    )
+
     # Init TTS
-    engine = "macos" if args.fallback else args.engine
-    print(f"Initializing TTS ({engine})...")
-    narrator = Narrator(engine=engine, model_id=args.model,
-                        chatterbox_repo=args.chatterbox_model,
-                        chatterbox_ref_audio=args.ref_audio,
-                        chatterbox_exaggeration=args.exaggeration,
-                        chatterbox_cfg_weight=args.cfg_weight)
+    engine = "macos" if args.fallback else cfg["engine"]
+    print(f"Initializing TTS ({engine}, profile={cfg['profile']})...")
+    narrator = Narrator(engine=engine, model_id=cfg["model"],
+                        chatterbox_repo=cfg["chatterbox_repo"],
+                        chatterbox_ref_audio=cfg["chatterbox_ref_audio"],
+                        chatterbox_exaggeration=cfg["chatterbox_exaggeration"],
+                        chatterbox_cfg_weight=cfg["chatterbox_cfg_weight"],
+                        pause_scale=cfg["pause_scale"])
 
     if not narrator.initialize():
         if engine != "macos":
@@ -173,8 +187,8 @@ def main():
             print("Error: TTS initialization failed", file=sys.stderr)
             sys.exit(1)
 
-    narrator.set_voice_params(rate=args.rate, speaker=args.speaker,
-                              instruct=args.instruct, kokoro_voice=args.kokoro_voice)
+    narrator.set_voice_params(rate=cfg["rate"], speaker=cfg["speaker"],
+                              instruct=cfg["instruct"], kokoro_voice=cfg["kokoro_voice"])
 
     # Choose chunk strategy
     if narrator.is_neural:

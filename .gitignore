@@ -46,6 +46,8 @@ env/
 *.m4a
 output/
 audio_output/
+# ...but DO track baked-in voice reference assets used by profiles
+!voices/*.wav
 
 # Model files (if downloading locally)
 models/

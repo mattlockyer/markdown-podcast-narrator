@@ -30,19 +30,22 @@ from pathlib import Path
 import click
 
 from parser import MarkdownParser
-from narrator import Narrator
+from narrator import Narrator, resolve_profile
 
 
 @click.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("-o", "--output", "output_file", default=None,
               help="Output audio file path (default: output.mp3)")
-@click.option("--speaker", default="Ryan", help="Qwen3-TTS speaker name")
-@click.option("--rate", default=1.10, type=float, help="Speech rate multiplier 0.5-2.0 (default: 1.10)")
+@click.option("--profile", default=None,
+              help="Voice profile: kokoro-transatlantic | chatterbox-transatlantic. "
+                   "Default: env MDPOD_PROFILE, else chatterbox-transatlantic")
+@click.option("--speaker", default=None, help="Qwen3-TTS speaker name")
+@click.option("--rate", default=None, type=float, help="Speech rate multiplier 0.5-2.0")
 @click.option("--fallback", is_flag=True, help="Use macOS 'say' instead of neural TTS")
-@click.option("--engine", default="qwen",
+@click.option("--engine", default=None,
               type=click.Choice(["qwen", "kokoro", "chatterbox", "macos"]),
-              help="TTS engine to use (default: qwen)")
+              help="TTS engine (overrides the profile's engine)")
 @click.option("--model", default=None,
               help="Qwen3-TTS model ID (default: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)")
 @click.option("--instruct", default=None,
@@ -60,10 +63,13 @@ from narrator import Narrator
               help="Chatterbox emotion/expressiveness 0-1 (default: 0.5)")
 @click.option("--cfg-weight", default=None, type=float,
               help="Chatterbox classifier-free guidance weight (default: 0.5)")
-def cli(input_file: str, output_file: str, speaker: str, rate: float,
+@click.option("--pause-scale", default=None, type=float,
+              help="Scale silence between sections/paragraphs (default: 1.0; "
+                   "try ~0.4 for Chatterbox, which already self-pauses)")
+def cli(input_file: str, output_file: str, profile: str, speaker: str, rate: float,
         fallback: bool, engine: str, model: str, instruct: str,
         kokoro_voice: str, chatterbox_model: str, ref_audio: str,
-        exaggeration: float, cfg_weight: float):
+        exaggeration: float, cfg_weight: float, pause_scale: float):
     """Convert a Markdown file to podcast-style audio narration.
 
     INPUT_FILE: Path to the Markdown (.md) file to convert.
@@ -87,16 +93,23 @@ def cli(input_file: str, output_file: str, speaker: str, rate: float,
             click.echo("Error: no content found in markdown file", err=True)
             sys.exit(1)
 
-        # --- Init TTS ---
-        if fallback:
-            engine = "macos"
+        # --- Resolve voice profile (explicit flags override profile values) ---
+        cfg = resolve_profile(
+            profile, engine=engine, rate=rate, kokoro_voice=kokoro_voice,
+            chatterbox_repo=chatterbox_model, chatterbox_ref_audio=ref_audio,
+            chatterbox_exaggeration=exaggeration, chatterbox_cfg_weight=cfg_weight,
+            pause_scale=pause_scale, instruct=instruct, speaker=speaker, model=model,
+        )
+        engine = "macos" if fallback else cfg["engine"]
 
-        click.echo(f"Initializing TTS ({engine})...")
-        narrator = Narrator(engine=engine, model_id=model,
-                            chatterbox_repo=chatterbox_model,
-                            chatterbox_ref_audio=ref_audio,
-                            chatterbox_exaggeration=exaggeration,
-                            chatterbox_cfg_weight=cfg_weight)
+        # --- Init TTS ---
+        click.echo(f"Initializing TTS ({engine}, profile={cfg['profile']})...")
+        narrator = Narrator(engine=engine, model_id=cfg["model"],
+                            chatterbox_repo=cfg["chatterbox_repo"],
+                            chatterbox_ref_audio=cfg["chatterbox_ref_audio"],
+                            chatterbox_exaggeration=cfg["chatterbox_exaggeration"],
+                            chatterbox_cfg_weight=cfg["chatterbox_cfg_weight"],
+                            pause_scale=cfg["pause_scale"])
 
         if not narrator.initialize():
             if engine != "macos":
@@ -109,8 +122,8 @@ def cli(input_file: str, output_file: str, speaker: str, rate: float,
                 click.echo("Error: TTS initialization failed", err=True)
                 sys.exit(1)
 
-        narrator.set_voice_params(rate=rate, speaker=speaker, instruct=instruct,
-                                  kokoro_voice=kokoro_voice)
+        narrator.set_voice_params(rate=cfg["rate"], speaker=cfg["speaker"],
+                                  instruct=cfg["instruct"], kokoro_voice=cfg["kokoro_voice"])
 
         # --- Choose chunk strategy based on backend ---
         is_neural = narrator.is_neural

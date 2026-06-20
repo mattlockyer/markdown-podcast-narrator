@@ -79,6 +79,61 @@ KOKORO_VOICE_PRESETS = {
 # fp16 is reference quality; -8bit / -4bit variants trade quality for size/speed.
 CHATTERBOX_DEFAULT_REPO = "mlx-community/chatterbox-fp16"
 
+# ----------------------------------------------------------------------
+# Voice profiles — named, toggleable "overall default" voices.
+# Pick one with --profile or the MDPOD_PROFILE env var; explicit CLI flags
+# still override individual settings. DEFAULT_PROFILE is what runs when
+# nothing is specified (e.g. mdpod.sh with no flags).
+# ----------------------------------------------------------------------
+_VOICES_DIR = Path(__file__).resolve().parent / "voices"
+
+PROFILES = {
+    # Original fast Kokoro voice — the af_heart/bf_emma transatlantic blend.
+    "kokoro-transatlantic": {
+        "engine": "kokoro",
+        "kokoro_voice": "transatlantic",
+        "rate": 1.10,
+    },
+    # Chatterbox clone of the transatlantic voice (the "v7" recipe): more
+    # natural/emotive, cloned from a baked-in 24s reference (0.55/0.45 blend,
+    # generated at rate 1.40). Slower than Kokoro but richer.
+    "chatterbox-transatlantic": {
+        "engine": "chatterbox",
+        "chatterbox_ref_audio": str(_VOICES_DIR / "chatterbox-transatlantic.wav"),
+        "chatterbox_exaggeration": 0.6,
+        "chatterbox_cfg_weight": 0.55,
+        "pause_scale": 0.25,
+        "rate": 1.10,  # ignored by Chatterbox (pacing comes from the reference)
+    },
+}
+
+DEFAULT_PROFILE = "chatterbox-transatlantic"
+
+_PROFILE_FALLBACKS = {
+    "engine": "kokoro", "rate": 1.10, "kokoro_voice": None,
+    "chatterbox_repo": None, "chatterbox_ref_audio": None,
+    "chatterbox_exaggeration": None, "chatterbox_cfg_weight": None,
+    "pause_scale": None, "instruct": None, "speaker": "Ryan", "model": None,
+}
+
+
+def resolve_profile(name: Optional[str] = None, **overrides):
+    """Resolve a named voice profile into a complete settings dict.
+
+    Precedence: explicit `overrides` (non-None) > the named profile's values >
+    `_PROFILE_FALLBACKS`. The profile name comes from `name`, else the
+    MDPOD_PROFILE env var, else DEFAULT_PROFILE. Unknown names resolve to just
+    the fallbacks (so a typo degrades to plain Kokoro rather than crashing).
+    """
+    name = name or os.environ.get("MDPOD_PROFILE") or DEFAULT_PROFILE
+    cfg = dict(_PROFILE_FALLBACKS)
+    cfg.update(PROFILES.get(name, {}))
+    for key, value in overrides.items():
+        if value is not None and key in cfg:
+            cfg[key] = value
+    cfg["profile"] = name
+    return cfg
+
 _KOKORO_PATCHED = False
 
 
@@ -137,7 +192,8 @@ class Narrator:
                  chatterbox_repo: Optional[str] = None,
                  chatterbox_ref_audio: Optional[str] = None,
                  chatterbox_exaggeration: Optional[float] = None,
-                 chatterbox_cfg_weight: Optional[float] = None):
+                 chatterbox_cfg_weight: Optional[float] = None,
+                 pause_scale: Optional[float] = None):
         # engine param takes priority; use_qwen kept for backward compat
         if engine != "qwen":
             self.engine = engine
@@ -172,6 +228,14 @@ class Narrator:
             else os.environ.get("MDPOD_CHATTERBOX_CFG", 0.5)
         )
         self._chatterbox_ref = None  # (mx.array, sr) loaded at init if ref given
+
+        # Scales the silence inserted between sections/paragraphs. 1.0 keeps the
+        # parser's defaults (right for flat Kokoro); lower tightens gaps for
+        # prosodic engines like Chatterbox that already pause on their own.
+        self.pause_scale = float(
+            pause_scale if pause_scale is not None
+            else os.environ.get("MDPOD_PAUSE_SCALE", 1.0)
+        )
 
         self.speaker = "Ryan"
         self.language = "English"
@@ -382,8 +446,9 @@ class Narrator:
                     written_any = True
                     del pcm_data
 
-                    if pause_ms > 0:
-                        pcm_out.write(_make_silence(pause_ms, sr))
+                    scaled_pause = int(pause_ms * self.pause_scale)
+                    if scaled_pause > 0:
+                        pcm_out.write(_make_silence(scaled_pause, sr))
 
                     gc.collect()
                     self._clear_device_cache()
