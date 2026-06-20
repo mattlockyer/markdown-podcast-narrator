@@ -79,6 +79,53 @@ KOKORO_VOICE_PRESETS = {
 # fp16 is reference quality; -8bit / -4bit variants trade quality for size/speed.
 CHATTERBOX_DEFAULT_REPO = "mlx-community/chatterbox-fp16"
 
+_KOKORO_PATCHED = False
+
+
+def _patch_kokoro_istftnet() -> None:
+    """Work around an mlx-audio 0.4.4 bug in Kokoro's istftnet vocoder.
+
+    `SineGen.__call__` builds `sine_waves` from `_f02sine(fn)` and `uv` from
+    `_f02uv(f0)`, but the two come out a few hundred samples apart in length
+    (a boundary-rounding bug). On real-length, multi-chunk text this crashes
+    with `[broadcast_shapes] Shapes (1,N,1) and (1,N+k,9) cannot be
+    broadcast`; short single-chunk clips happen to dodge it. We align both
+    tensors to the shorter (f0-derived) length before combining them — the
+    correct target, since `uv` follows f0 directly. Idempotent and a harmless
+    no-op once upstream lengths match again. Applied lazily at Kokoro init so
+    importing narrator never hard-depends on mlx-audio internals.
+    """
+    global _KOKORO_PATCHED
+    if _KOKORO_PATCHED:
+        return
+    try:
+        import mlx.core as mx
+        from mlx_audio.tts.models.kokoro import istftnet as _ist
+
+        if getattr(_ist.SineGen, "_mdpod_patched", False):
+            _KOKORO_PATCHED = True
+            return
+
+        def _call(self, f0):
+            fn = f0 * mx.arange(1, self.harmonic_num + 2)[None, None, :]
+            sine_waves = self._f02sine(fn) * self.sine_amp
+            uv = self._f02uv(f0)
+            L = min(sine_waves.shape[1], uv.shape[1])
+            sine_waves, uv = sine_waves[:, :L], uv[:, :L]
+            noise_amp = uv * self.noise_std + (1 - uv) * self.sine_amp / 3
+            noise = noise_amp * mx.random.normal(
+                (sine_waves.shape[0], L, sine_waves.shape[2])
+            )
+            sine_waves = sine_waves * uv + noise
+            return sine_waves, uv, noise
+
+        _ist.SineGen.__call__ = _call
+        _ist.SineGen._mdpod_patched = True
+        _KOKORO_PATCHED = True
+        logger.info("Applied Kokoro istftnet length-align patch (mlx-audio 0.4.4 workaround)")
+    except Exception as e:  # never block init on the patch
+        logger.warning(f"Could not apply Kokoro istftnet patch: {e}")
+
 
 class Narrator:
     """Text-to-speech narrator with backend-appropriate synthesis strategy."""
@@ -459,6 +506,8 @@ class Narrator:
             from mlx_audio.tts.models.kokoro import KokoroPipeline, Model
             import logging as _logging
             _logging.getLogger("misaki").setLevel(_logging.ERROR)
+
+            _patch_kokoro_istftnet()  # fix mlx-audio 0.4.4 long-text crash
 
             lang = self.language.lower()
             lang_code = "a" if lang in ("english", "en", "a") else "a"
